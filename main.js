@@ -41,12 +41,7 @@ process.argv.slice(2).forEach(function (val) {
 
 	//--------  EMITTER  --------
 	
-	var client = new fivebeans.client(host, port),
-	    succeeded = 0,
-		failed = 0,
-		pending_jobs = [],
-		pushing_interval,
-		checking_interval;
+	var client = new fivebeans.client(host, port);
 
 	client
 		.on('connect', function() {
@@ -56,7 +51,7 @@ process.argv.slice(2).forEach(function (val) {
 					console.log('failed to connect to tube');
 					console.log(err);
 				} else {
-					start();
+					emit();
 				}
 			});
 		})
@@ -69,119 +64,17 @@ process.argv.slice(2).forEach(function (val) {
 		{
 			console.log('closing');
 		})
-		.connect();	
+		.connect();
 
-	function start() {
-        start_emitting();
-        client.watch(tube, function() {
-            checking_interval = setInterval(check_buried, 100);
-        });
-	}
+    function empty() {}
 
-    function start_emitting() {
-        pushing_interval = setInterval(emit, 1000 * 60);
-        emit();
-    }
-	
-	function terminate() {
-		if (client) {
-			try {
-				client.stop();
-			} catch (e) {}
-			client = null;
-		}
-        if (worker) {
-            worker.stop();
-        }
-        process.exit();
-	}
-	
 	function emit() {
 		var payload = {
 				type: 'conversion_rate', 
 				payload: ['USD', 'HKD']};
-		client.put(1, 0, 10, JSON.stringify(payload), on_putting);
+		client.put(1, 0, 10, JSON.stringify(payload), empty);
 	}
-	
-	function on_putting(err, jobid) {
-		if (err) {
-			console.log('failed to put job to query');
-			console.log(err);
-		} else {
-            console.log('created job ' + jobid);
-			pending_jobs.push(jobid);
-		}
-	}
-	
-    function check_buried() {
-        var i,
-            job_id;
-        client.peek_buried(function(err, jobid, payload) {
-            if (err === 'NOT_FOUND') {
-                return;
-            }
-            client.destroy(jobid, function(err) {
-                on_buried_destroy(err, jobid);
-            });
-        });
-        for (i = pending_jobs.length; i--; ) {
-            job_id = pending_jobs[i];
-            //client.watch(tube, function() {});
-            client.peek(job_id, function(err) {
-                peeking(err, job_id);
-            });
-        }
-    }
-	
-	function peeking(err, jobid) {
-		var index;
-		if (err === 'NOT_FOUND') {
-			index = pending_jobs.indexOf(jobid);
-			if (index > -1) {
-				pending_jobs.splice(index, 1);
-			}
 
-			succeeded += 1;
-			if (succeeded >= 10) {
-				console.log('found 10 successfull tasks, terminating');
-				terminate();
-			}
-		}
-	}
-	
-	function on_buried_destroy(err, job_id) {
-		var index;
-		if (err) {
-			console.log('failed to destroy buried job');
-			console.log(err);
-			return;
-		} else {
-            console.log('destroyed job ' + job_id);
-        }
-		
-		index = pending_jobs.indexOf(job_id);
-		if (index > -1) {
-			pending_jobs.splice(index, 1);
-		} else {
-            console.log('it seems we destroyed a job we did not create');
-            return;
-        }
-		
-		failed += 1;
-		if (failed >= 3) {
-			console.log('found 3 failed jobs, terminating');
-			terminate();
-		} else {
-			clearInterval(pushing_interval);
-			setTimeout(function() {
-				// check if interval is already destroyed
-				if (pushing_interval) {
-                    start_emitting();
-				}
-			}, 3000);
-		}
-	}
-	
 	//--------  CONSUMER  --------
 	
 	function Scraper(payload, callback) {
@@ -190,14 +83,43 @@ process.argv.slice(2).forEach(function (val) {
 		this.callback = callback;
 		return this;
 	}
-	
+
+    Scraper.prototype.success = function success() {
+        successes += 1;
+        if (successes >= 10) {
+            console.log('10 successful scrapes, stopping');
+            this.callback('success');
+            process.exit();
+        }
+        this.callback('release', 60);
+    };
+
+    Scraper.prototype.fail = function fail() {
+        fails += 1;
+        if (fails >= 3) {
+            console.log('3 fails, stopping');
+            this.callback('bury');
+            process.exit();
+        }
+        this.callback('release', 3);
+    };
+
 	Scraper.prototype.scrape = function scrape() {
         var _this = this,
+            // ex: http://www.xe.com/currencyconverter/convert/?Amount=1&From=USD&To=GBP
 		    options = {
 			host: 'www.xe.com',
 			path: '/currencyconverter/convert/?Amount=1&From=' + this.from_curr + '&To=' + this.to_curr
 		};
-		// ex: http://www.xe.com/currencyconverter/convert/?Amount=1&From=USD&To=GBP
+
+        /*
+        //random breaking:
+        if (Math.random() > 0.75) {
+            console.log('sudden death!');
+            this.fail();
+            return;
+        }
+        */
 
 		http.request(options, function(response) {
             _this.fetch_response(response);
@@ -225,20 +147,20 @@ process.argv.slice(2).forEach(function (val) {
         jsdom.env(response, function (errors, window) {
             if (errors) {
                 console.log('failed to parse page');
-                _this.callback('bury');
+                _this.fail();
                 return;
             }
             td = window.document.querySelectorAll('.uccRes > .rightCol');
             if (td.length !== 1) {
                 console.log("didn't find td, burying");
-                _this.callback('bury');
+                _this.fail();
                 return;
             }
             rate = td[0].innerHTML;
             rate = /\d+\.\d+/.exec(rate);
             if (!rate || rate.length > 1) {
                 console.log('failed to find rate in td, burying');
-                _this.callback('bury');
+                _this.fail();
                 return;
             }
             rate = parseFloat(rate[0]).toFixed(2);
@@ -253,10 +175,10 @@ process.argv.slice(2).forEach(function (val) {
                 if (err) {
                     console.log('failed to put to DB');
                     console.log(err);
-                    _this.callback('bury');
+                    _this.fail();
                 }
                 console.log('saved rate ' + _this.from_curr + ' -> ' + _this.to_curr);
-                _this.callback('success');
+                _this.success();
             });
 
             window.close();
@@ -279,6 +201,8 @@ process.argv.slice(2).forEach(function (val) {
 			},
 			ignoreDefault: true},
 	    worker = new Beanworker(options),
+        successes = 0,
+        fails = 0,
 		db = mongoskin.db(mongo_conn_str);
 	worker.start([tube]);
 
