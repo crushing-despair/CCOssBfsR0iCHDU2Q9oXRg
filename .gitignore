@@ -1,0 +1,7 @@
+.idea/
+db/
+node_modules/
+
+mongo.bat
+*.lnk
+*.log
