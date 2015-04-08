@@ -30,59 +30,59 @@ process.argv.slice(2).forEach(function (val) {
 });
 
 (function(bean_port, bean_host, mongo_conn_str) {
-	var host = bean_host,
-		port = bean_port,
-		tube = 'sometubename',
-	    fivebeans = require('fivebeans'),
-	    Beanworker = fivebeans.worker,
-		http = require('http'),
+    var host = bean_host,
+        port = bean_port,
+        tube = 'sometubename',
+        fivebeans = require('fivebeans'),
+        Beanworker = fivebeans.worker,
+        http = require('http'),
         jsdom = require('jsdom'),
-		mongoskin = require('mongoskin');
+        mongoskin = require('mongoskin');
 
-	//--------  EMITTER  --------
-	
-	var client = new fivebeans.client(host, port);
+    //--------  EMITTER  --------
 
-	client
-		.on('connect', function() {
-			console.log('connected');
-			client.use(tube, function(err, tubename) {
-				if (err) {
-					console.log('failed to connect to tube');
-					console.log(err);
-				} else {
-					emit();
-				}
-			});
-		})
-		.on('error', function(err)
-		{
-			console.log('error: ');
-			console.log(err);
-		})
-		.on('close', function()
-		{
-			console.log('closing');
-		})
-		.connect();
+    var client = new fivebeans.client(host, port);
+
+    client
+        .on('connect', function() {
+            console.log('connected');
+            client.use(tube, function(err, tubename) {
+                if (err) {
+                    console.log('failed to connect to tube');
+                    console.log(err);
+                } else {
+                    emit();
+                }
+            });
+        })
+        .on('error', function(err)
+        {
+            console.log('error: ');
+            console.log(err);
+        })
+        .on('close', function()
+        {
+            console.log('closing');
+        })
+        .connect();
 
     function empty() {}
 
-	function emit() {
-		var payload = {
-				type: 'conversion_rate', 
-				payload: ['USD', 'HKD']};
-		client.put(1, 0, 10, JSON.stringify(payload), empty);
-	}
+    function emit() {
+        var payload = {
+                type: 'conversion_rate', 
+                payload: ['USD', 'HKD']};
+        client.put(1, 0, 10, JSON.stringify(payload), empty);
+    }
 
-	//--------  CONSUMER  --------
-	
-	function Scraper(payload, callback) {
-		this.from_curr = payload[0];
-		this.to_curr = payload[1];
-		this.callback = callback;
-		return this;
-	}
+    //--------  CONSUMER  --------
+    
+    function Scraper(payload, callback) {
+        this.from_curr = payload[0];
+        this.to_curr = payload[1];
+        this.callback = callback;
+        return this;
+    }
 
     Scraper.prototype.success = function success() {
         successes += 1;
@@ -104,13 +104,13 @@ process.argv.slice(2).forEach(function (val) {
         this.callback('release', 3);
     };
 
-	Scraper.prototype.scrape = function scrape() {
+    Scraper.prototype.scrape = function scrape() {
         var _this = this,
             // ex: http://www.xe.com/currencyconverter/convert/?Amount=1&From=USD&To=GBP
-		    options = {
-			host: 'www.xe.com',
-			path: '/currencyconverter/convert/?Amount=1&From=' + this.from_curr + '&To=' + this.to_curr
-		};
+            options = {
+            host: 'www.xe.com',
+            path: '/currencyconverter/convert/?Amount=1&From=' + this.from_curr + '&To=' + this.to_curr
+        };
 
         /*
         //random breaking:
@@ -121,28 +121,28 @@ process.argv.slice(2).forEach(function (val) {
         }
         */
 
-		http.request(options, function(response) {
+        http.request(options, function(response) {
             _this.fetch_response(response);
-		}).end();
-	};
-	
-	Scraper.prototype.fetch_response = function fetch_response(response) {
-		var _this = this,
+        }).end();
+    };
+    
+    Scraper.prototype.fetch_response = function fetch_response(response) {
+        var _this = this,
             str = '';
 
-		response.on('data', function (chunk) {
-			str += chunk;
-		});
-		response.on('end', function () {
-			_this.handle_response(str);
-		});
-	};
-	
-	Scraper.prototype.handle_response = function handle_response(response) {
-		var _this = this,
-			td,
-			rate,
-			data;
+        response.on('data', function (chunk) {
+            str += chunk;
+        });
+        response.on('end', function () {
+            _this.handle_response(str);
+        });
+    };
+    
+    Scraper.prototype.handle_response = function handle_response(response) {
+        var _this = this,
+            td,
+            rate,
+            data;
 
         jsdom.env(response, function (errors, window) {
             if (errors) {
@@ -183,27 +183,27 @@ process.argv.slice(2).forEach(function (val) {
 
             window.close();
         });
-	};
-	
-	function scrape_rate(payload, callback) {
-		new Scraper(payload, callback).scrape();
-	}
-	
-	var options = {
-			id: 'test_worker',
-			host: host,
-			port: port,
-			handlers: {
-				conversion_rate: {
-					type: 'conversion_rate',
-					work: scrape_rate
-				}
-			},
-			ignoreDefault: true},
-	    worker = new Beanworker(options),
+    };
+
+    function scrape_rate(payload, callback) {
+        new Scraper(payload, callback).scrape();
+    }
+
+    var options = {
+            id: 'test_worker',
+            host: host,
+            port: port,
+            handlers: {
+                conversion_rate: {
+                    type: 'conversion_rate',
+                    work: scrape_rate
+                }
+            },
+            ignoreDefault: true},
+        worker = new Beanworker(options),
         successes = 0,
         fails = 0,
-		db = mongoskin.db(mongo_conn_str);
-	worker.start([tube]);
+        db = mongoskin.db(mongo_conn_str);
+    worker.start([tube]);
 
 })(bean_port, bean_host, mongo_conn_str);
